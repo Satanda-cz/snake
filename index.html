@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Snake</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0f0f1a;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    font-family: 'Segoe UI', sans-serif;
+    color: #fff;
+    padding: 10px;
+  }
+  h1 { font-size: 2rem; letter-spacing: 4px; margin-bottom: 8px; color: #a0f0a0; text-shadow: 0 0 10px #0f0; }
+  #info { display: flex; gap: 16px; margin-bottom: 12px; font-size: 0.95rem; color: #ccc; flex-wrap: wrap; justify-content: center; }
+  #info span { background: #1a1a2e; padding: 4px 14px; border-radius: 20px; border: 1px solid #333; }
+  canvas { border: 2px solid #333; border-radius: 8px; box-shadow: 0 0 30px #0f04; max-width: 100%; }
+  #overlay {
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+  }
+  #overlay h2 { font-size: 2rem; color: #f66; text-shadow: 0 0 10px #f00; }
+  #overlay p { color: #aaa; font-size: 1rem; }
+  button {
+    padding: 10px 32px;
+    font-size: 1rem;
+    background: #1a3a1a;
+    color: #6f6;
+    border: 2px solid #4a4;
+    border-radius: 30px;
+    cursor: pointer;
+    transition: all .2s;
+    touch-action: manipulation;
+  }
+  button:hover { background: #2a5a2a; box-shadow: 0 0 12px #0f0a; }
+  #hint { margin-top: 8px; font-size: 0.8rem; color: #555; text-align: center; }
+
+  /* Mobilní šipky */
+  #dpad {
+    display: none;
+    margin-top: 16px;
+    user-select: none;
+  }
+  #dpad .row { display: flex; justify-content: center; gap: 6px; margin: 3px 0; }
+  .dbtn {
+    width: 60px; height: 60px;
+    background: #1a1a2e;
+    border: 2px solid #333;
+    border-radius: 12px;
+    font-size: 1.6rem;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+    color: #a0f0a0;
+    touch-action: manipulation;
+    transition: background .1s;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .dbtn:active { background: #2a2a4e; border-color: #6f6; }
+
+  @media (max-width: 600px) {
+    #dpad { display: block; }
+    #hint { display: none; }
+    h1 { font-size: 1.4rem; }
+  }
+</style>
+</head>
+<body>
+<h1>🐍 SNAKE</h1>
+<div id="info">
+  <span>Skóre: <b id="score">0</b></span>
+  <span>Nejlepší: <b id="best">0</b></span>
+  <span>Rychlost: <b id="level">1</b></span>
+</div>
+<div style="position:relative">
+  <canvas id="c"></canvas>
+  <div id="overlay">
+    <h2 id="msg">SNAKE</h2>
+    <p id="sub">Barevná hadí výzva!</p>
+    <button id="btn">▶ Hrát</button>
+  </div>
+</div>
+<p id="hint">Šipky nebo WASD · Mezerník = reset</p>
+
+<!-- Mobilní D-pad -->
+<div id="dpad">
+  <div class="row"><div class="dbtn" id="up">▲</div></div>
+  <div class="row">
+    <div class="dbtn" id="left">◀</div>
+    <div class="dbtn" id="down">▼</div>
+    <div class="dbtn" id="right">▶</div>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const overlay = document.getElementById('overlay');
+const scoreEl = document.getElementById('score');
+const bestEl = document.getElementById('best');
+const levelEl = document.getElementById('level');
+const msgEl = document.getElementById('msg');
+const subEl = document.getElementById('sub');
+const btn = document.getElementById('btn');
+
+// Responzivní velikost canvasu
+const SIZE = Math.min(window.innerWidth - 24, 400);
+canvas.width = SIZE;
+canvas.height = SIZE;
+const COLS = 20, ROWS = 20;
+const CELL = SIZE / COLS;
+
+const COLORS = [
+  '#ff4444','#ff8844','#ffdd44','#88ff44',
+  '#44ffdd','#44aaff','#8844ff','#ff44dd',
+  '#ff6688','#44ffaa'
+];
+
+let snake, dir, nextDir, foods, obstacles, score, best = 0, running = false, loop;
+
+function rnd(max) { return Math.floor(Math.random() * max); }
+
+function foodCount() { return 2 + Math.floor(score / 10) * 2; }
+
+function addFood() {
+  let pos, tries = 0;
+  do {
+    pos = { x: rnd(COLS), y: rnd(ROWS) };
+    tries++;
+  } while (tries < 200 && (
+    snake.some(s => s.x === pos.x && s.y === pos.y) ||
+    (obstacles && obstacles.some(o => o.x === pos.x && o.y === pos.y)) ||
+    foods.some(f => f.x === pos.x && f.y === pos.y)
+  ));
+  if (tries < 200) foods.push({ x: pos.x, y: pos.y, color: COLORS[rnd(COLORS.length)] });
+}
+
+function placeFood() {
+  foods = [];
+  const n = foodCount();
+  for (let i = 0; i < n; i++) addFood();
+}
+
+function addObstacle() {
+  let o, tries = 0;
+  do {
+    o = { x: rnd(COLS), y: rnd(ROWS) };
+    tries++;
+  } while (tries < 200 && (
+    snake.some(s => s.x === o.x && s.y === o.y) ||
+    foods.some(f => f.x === o.x && f.y === o.y) ||
+    obstacles.some(ob => ob.x === o.x && ob.y === o.y)
+  ));
+  if (tries < 200) obstacles.push(o);
+}
+
+function placeObstacles() {
+  obstacles = [];
+  for (let i = 0; i < 3; i++) addObstacle();
+}
+
+function start() {
+  snake = [{x:10,y:10},{x:9,y:10},{x:8,y:10}];
+  dir = {x:1,y:0};
+  nextDir = {x:1,y:0};
+  score = 0;
+  scoreEl.textContent = 0;
+  levelEl.textContent = 1;
+  obstacles = [];
+  placeFood();
+  placeObstacles();
+  overlay.style.display = 'none';
+  running = true;
+  clearTimeout(loop);
+  tick();
+}
+
+function getSpeed() { return Math.max(50, 200 - score * 5); }
+
+function tick() {
+  if (!running) return;
+  dir = nextDir;
+  const head = { x: snake[0].x + dir.x, y: snake[0].y + dir.y };
+
+  if (head.x < 0 || head.x >= COLS || head.y < 0 || head.y >= ROWS ||
+      snake.some(s => s.x === head.x && s.y === head.y) ||
+      obstacles.some(o => o.x === head.x && o.y === head.y)) {
+    gameOver(); return;
+  }
+
+  snake.unshift(head);
+  const eaten = foods.findIndex(f => f.x === head.x && f.y === head.y);
+  if (eaten !== -1) {
+    score++;
+    scoreEl.textContent = score;
+    if (score > best) { best = score; bestEl.textContent = best; }
+    levelEl.textContent = score + 1;
+    foods.splice(eaten, 1);
+    const target = foodCount();
+    while (foods.length < target) addFood();
+    addObstacle();
+  } else {
+    snake.pop();
+  }
+
+  draw();
+  loop = setTimeout(tick, getSpeed());
+}
+
+function draw() {
+  ctx.fillStyle = '#0f0f1a';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.strokeStyle = '#1a1a2e';
+  ctx.lineWidth = 0.5;
+  for (let i = 0; i <= COLS; i++) {
+    ctx.beginPath(); ctx.moveTo(i*CELL,0); ctx.lineTo(i*CELL,canvas.height); ctx.stroke();
+  }
+  for (let j = 0; j <= ROWS; j++) {
+    ctx.beginPath(); ctx.moveTo(0,j*CELL); ctx.lineTo(canvas.width,j*CELL); ctx.stroke();
+  }
+
+  // Překážky
+  obstacles.forEach(o => {
+    ctx.shadowColor = '#ff4400';
+    ctx.shadowBlur = 12;
+    roundRect(ctx, o.x*CELL+2, o.y*CELL+2, CELL-4, CELL-4, 4, '#cc2200');
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = '#ff8866';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(o.x*CELL+6, o.y*CELL+6); ctx.lineTo(o.x*CELL+CELL-6, o.y*CELL+CELL-6);
+    ctx.moveTo(o.x*CELL+CELL-6, o.y*CELL+6); ctx.lineTo(o.x*CELL+6, o.y*CELL+CELL-6);
+    ctx.stroke();
+  });
+
+  // Had
+  snake.forEach((seg, i) => {
+    const color = COLORS[i % COLORS.length];
+    ctx.shadowColor = color;
+    ctx.shadowBlur = i === 0 ? 18 : 8;
+    roundRect(ctx, seg.x*CELL+1.5, seg.y*CELL+1.5, CELL-3, CELL-3, 5, color);
+    if (i === 0) {
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = '#fff';
+      const ex = dir.x, ey = dir.y;
+      const cx = seg.x*CELL+CELL/2, cy = seg.y*CELL+CELL/2;
+      const e1x = cx+ey*3+ex*4, e1y = cy-ex*3+ey*4;
+      const e2x = cx-ey*3+ex*4, e2y = cy+ex*3+ey*4;
+      ctx.beginPath(); ctx.arc(e1x,e1y,2.5,0,Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(e2x,e2y,2.5,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle = '#111';
+      ctx.beginPath(); ctx.arc(e1x+ex,e1y+ey,1.2,0,Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(e2x+ex,e2y+ey,1.2,0,Math.PI*2); ctx.fill();
+    }
+  });
+  ctx.shadowBlur = 0;
+
+  // Jídlo
+  foods.forEach(f => {
+    const fx = f.x*CELL+CELL/2, fy = f.y*CELL+CELL/2;
+    const pulse = 0.85 + 0.15*Math.sin(Date.now()/200);
+    ctx.shadowColor = f.color;
+    ctx.shadowBlur = 15;
+    ctx.fillStyle = f.color;
+    ctx.beginPath();
+    ctx.arc(fx, fy, CELL/2*0.75*pulse, 0, Math.PI*2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = 'rgba(255,255,255,0.4)';
+    ctx.beginPath();
+    ctx.arc(fx-2, fy-2, CELL/8, 0, Math.PI*2);
+    ctx.fill();
+  });
+}
+
+function roundRect(ctx, x, y, w, h, r, color) {
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(x+r,y);
+  ctx.lineTo(x+w-r,y); ctx.quadraticCurveTo(x+w,y,x+w,y+r);
+  ctx.lineTo(x+w,y+h-r); ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
+  ctx.lineTo(x+r,y+h); ctx.quadraticCurveTo(x,y+h,x,y+h-r);
+  ctx.lineTo(x,y+r); ctx.quadraticCurveTo(x,y,x+r,y);
+  ctx.closePath();
+  ctx.fill();
+}
+
+function gameOver() {
+  running = false;
+  clearTimeout(loop);
+  msgEl.textContent = '💀 KONEC HRY';
+  subEl.textContent = `Skóre: ${score}${score > 0 && score === best ? ' 🏆 Nový rekord!' : ''}`;
+  btn.textContent = '🔄 Hrát znovu';
+  overlay.style.display = 'flex';
+}
+
+function setDir(nd) {
+  if (!(nd.x === -dir.x && nd.y === -dir.y)) nextDir = nd;
+}
+
+// Klávesnice
+document.addEventListener('keydown', e => {
+  if (e.key === ' ') { e.preventDefault(); start(); return; }
+  if (!running) return;
+  const map = {
+    ArrowUp:{x:0,y:-1}, ArrowDown:{x:0,y:1},
+    ArrowLeft:{x:-1,y:0}, ArrowRight:{x:1,y:0},
+    w:{x:0,y:-1}, s:{x:0,y:1}, a:{x:-1,y:0}, d:{x:1,y:0},
+    W:{x:0,y:-1}, S:{x:0,y:1}, A:{x:-1,y:0}, D:{x:1,y:0}
+  };
+  const nd = map[e.key];
+  if (nd) { setDir(nd); e.preventDefault(); }
+});
+
+// Mobilní D-pad
+document.getElementById('up').addEventListener('touchstart',    e => { e.preventDefault(); if(running) setDir({x:0,y:-1}); else start(); }, {passive:false});
+document.getElementById('down').addEventListener('touchstart',  e => { e.preventDefault(); if(running) setDir({x:0,y:1});  else start(); }, {passive:false});
+document.getElementById('left').addEventListener('touchstart',  e => { e.preventDefault(); if(running) setDir({x:-1,y:0}); else start(); }, {passive:false});
+document.getElementById('right').addEventListener('touchstart', e => { e.preventDefault(); if(running) setDir({x:1,y:0});  else start(); }, {passive:false});
+
+btn.addEventListener('click', start);
+
+// Swipe podpora
+let tx = 0, ty = 0;
+canvas.addEventListener('touchstart', e => { tx = e.touches[0].clientX; ty = e.touches[0].clientY; }, {passive:true});
+canvas.addEventListener('touchend', e => {
+  if (!running) { start(); return; }
+  const dx = e.changedTouches[0].clientX - tx;
+  const dy = e.changedTouches[0].clientY - ty;
+  if (Math.abs(dx) > Math.abs(dy)) setDir(dx > 0 ? {x:1,y:0} : {x:-1,y:0});
+  else setDir(dy > 0 ? {x:0,y:1} : {x:0,y:-1});
+}, {passive:true});
+
+// Počáteční obrazovka
+ctx.fillStyle = '#0f0f1a';
+ctx.fillRect(0, 0, canvas.width, canvas.height);
+</script>
+</body>
+</html>
